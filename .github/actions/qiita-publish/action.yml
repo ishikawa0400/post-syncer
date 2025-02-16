@@ -1,0 +1,80 @@
+name: "Publish articles to Qiita"
+description: "Publish articles to Qiita using qiita-cli"
+
+inputs:
+  qiita-token:
+    required: true
+    description: "Qiita API token"
+  github-token:
+    required: true
+    description: "GitHub token"
+  qiita-dir:
+    required: false
+    description: "Root directory of qiita articles"
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-node@v3
+      with:
+        node-version: "18.16.0"
+    - name: npm ci
+      run: npm ci
+      shell: bash
+    - name: get diff post
+      run: |
+        git fetch origin ${{ github.event.before }} --depth=1
+        git diff --name-only ${{ github.event.before }} ${{ github.sha }} -- articles/ | grep '\.md$' > changed_files.txt
+      shell: bash
+    - name: convert to qiita
+      run: |
+        while read file; do
+          echo "Processing $file"
+          npm run ztoq $file ${{ inputs.qiita-dir }}/public
+        done < changed_files.txt
+      shell: bash
+    - name: Install qiita-cli
+      run: npm install -g @qiita/qiita-cli@v0.3.0
+      shell: bash
+    - name: Publish articles
+      run: qiita publish --all
+      env:
+        QIITA_TOKEN: ${{ inputs.qiita-token }}
+        QIITA_CLI_ITEMS_ROOT: ${{ inputs.qiita-dir }}
+      shell: bash
+    - name: 差分をコミット
+      run: |
+          if [[ -n "${{ inputs.qiita-dir }}" ]]; then
+            git add ${{ inputs.qiita-dir }}/public/*
+          else
+            git add public/*
+          fi
+
+          # 除外フォルダの設定
+          if ! git diff --staged --exit-code --quiet; then
+            git remote set-url origin https://github-actions:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}
+            git config --global user.name "${GITHUB_ACTOR}"
+            git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+
+            git commit -m "zennの記事をqiitaに変換 by workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}";
+          fi
+      shell: bash
+    - name: Push
+      uses: CasperWA/push-protected@v2
+      with:
+        token: ${{ inputs.github-token }}
+        branch: main
+    # - name: Commit
+    #   run: |
+    #     if [[ -n "${{ inputs.qiita-dir }}" ]]; then
+    #       git add ${{ inputs.qiita-dir }}/public/*
+    #     else
+    #       git add public/*
+    #     fi
+    #     if ! git diff --staged --exit-code --quiet; then
+    #       git config --global user.name 'github-actions[bot]'
+    #       git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+    #       git commit -m '[skip ci] Updated by qiita-cli'
+    #     fi
+    #   shell: bash
+    
